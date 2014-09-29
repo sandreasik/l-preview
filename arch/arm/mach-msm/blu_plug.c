@@ -55,7 +55,7 @@ static unsigned int rcrc;
 
 static struct delayed_work dyn_work;
 static struct workqueue_struct *dyn_workq;
-static struct work_struct suspend, resume;
+static struct work_struct suspend, resume, touchy;
 static struct notifier_block notify;
 
 
@@ -101,6 +101,11 @@ static inline void up_one(void)
 out:
 	down_timer = 0;
 	up_timer = 0;
+}
+
+static __ref void touch_up_one(struct work_struct *work)
+{
+	up_one();
 }
 
 /* Iterate through online CPUs and put offline the lowest loaded one */
@@ -223,7 +228,7 @@ static __ref void max_screenoff(bool screenoff)
 		}
 		
 		if (!powersaver_mode)
-			queue_delayed_work_on(0, dyn_workq, &dyn_work, delay);
+			queue_delayed_work_on(0, dyn_workq, &dyn_work, 0);
 	}
 	
 #if DEBUG
@@ -280,7 +285,7 @@ static __ref void powersaver_fn(bool mode)
 			cpufreq_cpu_put(policy);
 		}
 		
-		queue_delayed_work_on(0, dyn_workq, &dyn_work, delay);
+		queue_delayed_work_on(0, dyn_workq, &dyn_work, 0);
 	}
 	
 #if DEBUG
@@ -319,16 +324,15 @@ static __ref int lcd_notifier_callback(struct notifier_block *this, unsigned lon
 	return NOTIFY_OK;
 }
 
-static __ref void blu_plug_input_event(struct input_handle *handle,
+static void blu_plug_input_event(struct input_handle *handle,
 		unsigned int type,
 		unsigned int code, int value)
 {
-	if (type == EV_SYN && code == SYN_REPORT) {
-		if (num_online_cpus() < 2 && !powersaver_mode) {
-			down_timer = 0;
-			up_one();
-		}
-	}
+	if (num_online_cpus() >= 2 || powersaver_mode)
+		return;
+	
+	if (type == EV_SYN && code == SYN_REPORT)
+		queue_work_on(0, dyn_workq, &touchy);
 }
 
 static int blu_plug_input_connect(struct input_handler *handler,
@@ -625,6 +629,7 @@ static int __init dyn_hp_init(void)
 
 	INIT_WORK(&resume, dyn_lcd_resume);
 	INIT_WORK(&suspend, dyn_lcd_suspend);
+	INIT_WORK(&touchy, touch_up_one);
 	INIT_DELAYED_WORK(&dyn_work, load_timer);
 	queue_delayed_work_on(0, dyn_workq, &dyn_work, INIT_DELAY);
 
