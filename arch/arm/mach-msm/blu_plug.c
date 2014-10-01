@@ -38,6 +38,8 @@
 #define MAX_FREQ_SCREENOFF (1190400)
 #define MAX_FREQ_POWERSAVER (1728000)
 #define MAX_FREQ_PLUG (2265600)
+#define MAX_CORES_PLUG (4)
+
 
 static unsigned int up_threshold = UP_THRESHOLD;;
 static unsigned int delay = DELAY;
@@ -50,6 +52,8 @@ static unsigned int up_timer_cnt = DEF_UP_TIMER_CNT;
 static unsigned int max_cores_screenoff = MAX_CORES_SCREENOFF;
 static unsigned int max_freq_screenoff = MAX_FREQ_SCREENOFF;
 static unsigned int max_freq_plug = MAX_FREQ_PLUG;
+static unsigned int max_freq_plug_fn = MAX_FREQ_PLUG;
+static unsigned int max_cores_plug = MAX_CORES_PLUG;
 static unsigned int powersaver_mode = 0;
 static unsigned int rcrc;
 
@@ -190,11 +194,16 @@ static __ref void max_screenoff(bool screenoff)
 	if (screenoff) {
 		freq = max_freq_screenoff;
 		
-		if (max_cores_screenoff > min_online)
-		max_cores_screenoff = min_online;
+		if (powersaver_mode)
+			goto freq_set;
 		
-		cancel_delayed_work_sync(&dyn_work);
+		if (max_cores_screenoff > max_online)
+			max_cores_screenoff = max_online;
 		
+		max_cores_plug = max_online;
+		max_online = max_cores_screenoff;
+
+freq_set:		
 		for_each_online_cpu(cpu) {
 			policy = cpufreq_cpu_get(cpu);
 			
@@ -213,8 +222,10 @@ static __ref void max_screenoff(bool screenoff)
 	else {
 		freq = max_freq_plug;
 
-		if (!powersaver_mode)
+		if (!powersaver_mode) {
+			max_online = max_cores_plug;
 			up_all(true);
+		}
 		
 		for_each_online_cpu(cpu) {
 			policy = cpufreq_cpu_get(cpu);
@@ -258,7 +269,7 @@ static __ref void powersaver_fn(bool mode)
 			policy = cpufreq_cpu_get(cpu);
 			
 			if (freq_save > policy->min && freq_save != policy->max) {
-				max_freq_plug = policy->max;
+				max_freq_plug_fn = policy->max;
 				policy->user_policy.max = freq_save;
 				policy->max = freq_save;
 			}
@@ -270,7 +281,7 @@ static __ref void powersaver_fn(bool mode)
 		}
 	}
 	else {
-		freq_save = max_freq_plug;
+		freq_save = max_freq_plug_fn;
 
 		up_all(true);
 		
@@ -623,7 +634,7 @@ static int __init dyn_hp_init(void)
 	if (rcrc)
 		pr_info("%s: failed to register input handler\n",__func__);
 	
-	dyn_workq = alloc_workqueue("dyn_hotplug_workqueue", WQ_HIGHPRI | WQ_FREEZABLE, 1);
+	dyn_workq = alloc_workqueue("dyn_hotplug_workqueue", WQ_HIGHPRI | WQ_FREEZABLE, 0);
 	if (!dyn_workq)
 		return -ENOMEM;
 
